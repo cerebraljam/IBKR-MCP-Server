@@ -8,6 +8,6 @@ through the TWS API using ib_async.
 __version__ = "0.1.0"
 __author__ = "IBKR MCP Server"
 
-from ibkr_mcp.server import server
+from ibkr_mcp.server import mcp
 
-__all__ = ["server"] 
+__all__ = ["mcp"] 

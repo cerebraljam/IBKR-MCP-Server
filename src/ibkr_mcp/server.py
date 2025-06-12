@@ -9,14 +9,13 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
-from datetime import datetime
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Optional
+from datetime import datetime
 
-import mcp.server.stdio
 import mcp.types as types
-from mcp.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
+from mcp.server.fastmcp import FastMCP
 
 from ibkr_mcp.config import get_default_config, IBKRConfig
 from ibkr_mcp.ibkr_client import IBKRClient
@@ -26,15 +25,17 @@ from ibkr_mcp.models import Portfolio, AccountSummary, MarketData
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global IBKR client instance
-ibkr_client: Optional[IBKRClient] = None
+
+@dataclass
+class AppContext:
+    """Application context with IBKR client and configuration."""
+    ibkr_client: IBKRClient
+    config: IBKRConfig
 
 
 @asynccontextmanager
-async def server_lifespan(server: Server) -> AsyncIterator[Dict[str, Any]]:
-    """Manage IBKR connection lifecycle."""
-    global ibkr_client
-    
+async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+    """Manage IBKR connection lifecycle with type-safe context."""
     logger.info("Starting IBKR MCP Server...")
     
     # Initialize IBKR client
@@ -49,7 +50,7 @@ async def server_lifespan(server: Server) -> AsyncIterator[Dict[str, Any]]:
         else:
             logger.info(f"Connected to IBKR TWS (Paper: {config.is_paper})")
         
-        yield {"ibkr_client": ibkr_client, "config": config}
+        yield AppContext(ibkr_client=ibkr_client, config=config)
         
     finally:
         # Cleanup
@@ -58,127 +59,110 @@ async def server_lifespan(server: Server) -> AsyncIterator[Dict[str, Any]]:
         logger.info("IBKR MCP Server shutdown")
 
 
-# Create MCP server with lifespan management
-server = Server("IBKR-MCP-Server", lifespan=server_lifespan)
+# Create MCP server with lifespan
+mcp = FastMCP("IBKR-MCP-Server", lifespan=app_lifespan)
 
 
-# Tools Implementation
+# Tools Implementation using @mcp.tool()
 
-@server.call_tool()
-async def get_portfolio(name: str, arguments: dict) -> list[types.TextContent]:
+@mcp.tool()
+async def get_portfolio() -> str:
     """Get the current portfolio with all positions, cash, and P&L information."""
-    global ibkr_client
-    
-    if name != "get_portfolio":
-        raise ValueError(f"Unknown tool: {name}")
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client or not ibkr_client.connected:
-        return [types.TextContent(type="text", text="Error: Not connected to IBKR TWS")]
+        return "Error: Not connected to IBKR TWS"
     
     try:
         portfolio = await ibkr_client.get_portfolio()
-        result = json.dumps(portfolio.to_dict(), indent=2)
-        return [types.TextContent(type="text", text=result)]
+        return json.dumps(portfolio.to_dict(), indent=2)
     except Exception as e:
         logger.error(f"Error getting portfolio: {e}")
-        return [types.TextContent(type="text", text=f"Error getting portfolio: {str(e)}")]
+        return f"Error getting portfolio: {str(e)}"
 
 
-@server.call_tool()
-async def get_account_summary(name: str, arguments: dict) -> list[types.TextContent]:
+@mcp.tool()
+async def get_account_summary() -> str:
     """Get account summary including cash balances, margin requirements, and key metrics."""
-    global ibkr_client
-    
-    if name != "get_account_summary":
-        raise ValueError(f"Unknown tool: {name}")
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client or not ibkr_client.connected:
-        return [types.TextContent(type="text", text="Error: Not connected to IBKR TWS")]
+        return "Error: Not connected to IBKR TWS"
     
     try:
         summary = await ibkr_client.get_account_summary()
-        result = json.dumps(summary.to_dict(), indent=2)
-        return [types.TextContent(type="text", text=result)]
+        return json.dumps(summary.to_dict(), indent=2)
     except Exception as e:
         logger.error(f"Error getting account summary: {e}")
-        return [types.TextContent(type="text", text=f"Error getting account summary: {str(e)}")]
+        return f"Error getting account summary: {str(e)}"
 
 
-@server.call_tool()
-async def get_stock_price(name: str, arguments: dict) -> list[types.TextContent]:
-    """Get current stock price and market data."""
-    global ibkr_client
+@mcp.tool()
+async def get_stock_price(symbol: str, exchange: str = "SMART") -> str:
+    """Get current stock price and market data.
     
-    if name != "get_stock_price":
-        raise ValueError(f"Unknown tool: {name}")
+    Args:
+        symbol: Stock symbol (e.g., 'AAPL', 'MSFT')
+        exchange: Exchange to use (default: 'SMART' for best execution)
+    """
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client or not ibkr_client.connected:
-        return [types.TextContent(type="text", text="Error: Not connected to IBKR TWS")]
-    
-    symbol = arguments.get("symbol")
-    exchange = arguments.get("exchange", "SMART")
-    
-    if not symbol:
-        return [types.TextContent(type="text", text="Error: 'symbol' argument is required")]
+        return "Error: Not connected to IBKR TWS"
     
     try:
         market_data = await ibkr_client.get_stock_price(symbol.upper(), exchange)
-        result = json.dumps(market_data.to_dict(), indent=2)
-        return [types.TextContent(type="text", text=result)]
+        return json.dumps(market_data.to_dict(), indent=2)
     except Exception as e:
         logger.error(f"Error getting stock price for {symbol}: {e}")
-        return [types.TextContent(type="text", text=f"Error getting stock price for {symbol}: {str(e)}")]
+        return f"Error getting stock price for {symbol}: {str(e)}"
 
 
-@server.call_tool()
-async def get_option_price(name: str, arguments: dict) -> list[types.TextContent]:
-    """Get current option price and market data."""
-    global ibkr_client
+@mcp.tool()
+async def get_option_price(symbol: str, expiry: str, strike: float, right: str, exchange: str = "SMART") -> str:
+    """Get current option price and market data.
     
-    if name != "get_option_price":
-        raise ValueError(f"Unknown tool: {name}")
+    Args:
+        symbol: Underlying stock symbol (e.g., 'AAPL')
+        expiry: Option expiry date in YYYYMMDD format (e.g., '20241220')
+        strike: Strike price (e.g., 150.0)
+        right: Option type - 'C' for call, 'P' for put
+        exchange: Exchange to use (default: 'SMART')
+    """
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client or not ibkr_client.connected:
-        return [types.TextContent(type="text", text="Error: Not connected to IBKR TWS")]
-    
-    symbol = arguments.get("symbol")
-    expiry = arguments.get("expiry")
-    strike = arguments.get("strike")
-    right = arguments.get("right")
-    exchange = arguments.get("exchange", "SMART")
-    
-    if not all([symbol, expiry, strike, right]):
-        return [types.TextContent(type="text", text="Error: 'symbol', 'expiry', 'strike', and 'right' arguments are required")]
+        return "Error: Not connected to IBKR TWS"
     
     # Validate right parameter
     if right.upper() not in ['C', 'P']:
-        return [types.TextContent(type="text", text="Error: 'right' must be 'C' for call or 'P' for put")]
+        return "Error: 'right' must be 'C' for call or 'P' for put"
     
     try:
         market_data = await ibkr_client.get_option_price(
             symbol.upper(), expiry, float(strike), right.upper(), exchange
         )
-        result = json.dumps(market_data.to_dict(), indent=2)
-        return [types.TextContent(type="text", text=result)]
+        return json.dumps(market_data.to_dict(), indent=2)
     except Exception as e:
         logger.error(f"Error getting option price: {e}")
-        return [types.TextContent(type="text", text=f"Error getting option price: {str(e)}")]
+        return f"Error getting option price: {str(e)}"
 
 
-@server.call_tool()
-async def get_connection_status(name: str, arguments: dict) -> list[types.TextContent]:
+@mcp.tool()
+def get_connection_status() -> str:
     """Get the current connection status and configuration."""
-    global ibkr_client
-    
-    if name != "get_connection_status":
-        raise ValueError(f"Unknown tool: {name}")
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client:
-        result = json.dumps({
+        return json.dumps({
             "connected": False,
             "error": "IBKR client not initialized"
         }, indent=2)
-        return [types.TextContent(type="text", text=result)]
     
     try:
         status = {
@@ -192,176 +176,85 @@ async def get_connection_status(name: str, arguments: dict) -> list[types.TextCo
             },
             "timestamp": datetime.now().isoformat()
         }
-        result = json.dumps(status, indent=2)
-        return [types.TextContent(type="text", text=result)]
+        return json.dumps(status, indent=2)
     except Exception as e:
         logger.error(f"Error getting connection status: {e}")
-        return [types.TextContent(type="text", text=f"Error getting connection status: {str(e)}")]
-
-
-# List Tools Handler
-
-@server.list_tools()
-async def handle_list_tools() -> list[types.Tool]:
-    """List available tools."""
-    return [
-        types.Tool(
-            name="get_portfolio",
-            description="Get the current portfolio with all positions, cash, and P&L information",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_account_summary",
-            description="Get account summary including cash balances, margin requirements, and key metrics",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        ),
-        types.Tool(
-            name="get_stock_price",
-            description="Get current stock price and market data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Stock symbol (e.g., 'AAPL', 'MSFT')"
-                    },
-                    "exchange": {
-                        "type": "string",
-                        "description": "Exchange to use (default: 'SMART' for best execution)",
-                        "default": "SMART"
-                    }
-                },
-                "required": ["symbol"]
-            }
-        ),
-        types.Tool(
-            name="get_option_price",
-            description="Get current option price and market data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Underlying stock symbol (e.g., 'AAPL')"
-                    },
-                    "expiry": {
-                        "type": "string",
-                        "description": "Option expiry date in YYYYMMDD format (e.g., '20241220')"
-                    },
-                    "strike": {
-                        "type": "number",
-                        "description": "Strike price (e.g., 150.0)"
-                    },
-                    "right": {
-                        "type": "string",
-                        "description": "Option type - 'C' for call, 'P' for put"
-                    },
-                    "exchange": {
-                        "type": "string",
-                        "description": "Exchange to use (default: 'SMART')",
-                        "default": "SMART"
-                    }
-                },
-                "required": ["symbol", "expiry", "strike", "right"]
-            }
-        ),
-        types.Tool(
-            name="get_connection_status",
-            description="Get the current connection status and configuration",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        )
-    ]
+        return f"Error getting connection status: {str(e)}"
 
 
 # Resources Implementation
 
-@server.read_resource()
-async def handle_read_resource(uri: str) -> str:
-    """Handle resource requests."""
-    global ibkr_client
+@mcp.resource("portfolio://current")
+async def get_portfolio_resource() -> str:
+    """Current portfolio as a resource for LLM context."""
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
     
     if not ibkr_client or not ibkr_client.connected:
         return "Error: Not connected to IBKR TWS"
     
     try:
-        if uri == "portfolio://current":
-            portfolio = await ibkr_client.get_portfolio()
-            return f"Portfolio for account {portfolio.account}:\n\n" + json.dumps(portfolio.to_dict(), indent=2)
-        
-        elif uri == "account://summary":
-            summary = await ibkr_client.get_account_summary()
-            return f"Account summary for {summary.account}:\n\n" + json.dumps(summary.to_dict(), indent=2)
-        
-        elif uri == "positions://all":
-            portfolio = await ibkr_client.get_portfolio()
-            positions_data = {
-                "account": portfolio.account,
-                "position_count": len(portfolio.positions),
-                "positions": [pos.to_dict() for pos in portfolio.positions],
-                "timestamp": portfolio.timestamp
-            }
-            return f"All positions for account {portfolio.account}:\n\n" + json.dumps(positions_data, indent=2)
-        
-        else:
-            raise ValueError(f"Unknown resource: {uri}")
-            
+        portfolio = await ibkr_client.get_portfolio()
+        return f"Portfolio for account {portfolio.account}:\n\n" + json.dumps(portfolio.to_dict(), indent=2)
     except Exception as e:
-        logger.error(f"Error reading resource {uri}: {e}")
-        return f"Error reading resource {uri}: {str(e)}"
+        logger.error(f"Error reading portfolio resource: {e}")
+        return f"Error reading portfolio resource: {str(e)}"
 
 
-@server.list_resources()
-async def handle_list_resources() -> list[types.Resource]:
-    """List available resources."""
-    return [
-        types.Resource(
-            uri="portfolio://current",
-            name="Current Portfolio",
-            description="Current portfolio as a resource for LLM context",
-            mimeType="application/json"
-        ),
-        types.Resource(
-            uri="account://summary",
-            name="Account Summary",
-            description="Account summary as a resource for LLM context",
-            mimeType="application/json"
-        ),
-        types.Resource(
-            uri="positions://all",
-            name="All Positions",
-            description="All positions as a resource for LLM context",
-            mimeType="application/json"
-        )
-    ]
+@mcp.resource("account://summary")
+async def get_account_summary_resource() -> str:
+    """Account summary as a resource for LLM context."""
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
+    
+    if not ibkr_client or not ibkr_client.connected:
+        return "Error: Not connected to IBKR TWS"
+    
+    try:
+        summary = await ibkr_client.get_account_summary()
+        return f"Account summary for {summary.account}:\n\n" + json.dumps(summary.to_dict(), indent=2)
+    except Exception as e:
+        logger.error(f"Error reading account summary resource: {e}")
+        return f"Error reading account summary resource: {str(e)}"
+
+
+@mcp.resource("positions://all")
+async def get_positions_resource() -> str:
+    """All positions as a resource for LLM context."""
+    ctx = mcp.get_context()
+    ibkr_client = ctx.request_context.lifespan_context.ibkr_client
+    
+    if not ibkr_client or not ibkr_client.connected:
+        return "Error: Not connected to IBKR TWS"
+    
+    try:
+        portfolio = await ibkr_client.get_portfolio()
+        positions_data = {
+            "account": portfolio.account,
+            "position_count": len(portfolio.positions),
+            "positions": [pos.to_dict() for pos in portfolio.positions],
+            "timestamp": portfolio.timestamp
+        }
+        return f"All positions for account {portfolio.account}:\n\n" + json.dumps(positions_data, indent=2)
+    except Exception as e:
+        logger.error(f"Error reading positions resource: {e}")
+        return f"Error reading positions resource: {str(e)}"
 
 
 # Prompts Implementation
 
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-    """Handle prompt requests."""
-    if name == "analyze_portfolio":
-        return types.GetPromptResult(
-            description="Analyze the current portfolio performance and provide insights",
-            messages=[
-                types.PromptMessage(
-                    role="user",
-                    content=types.TextContent(
-                        type="text",
-                        text="""Please analyze my current portfolio using the portfolio://current resource. 
-    
+@mcp.prompt("analyze_portfolio")
+def analyze_portfolio_prompt() -> types.GetPromptResult:
+    """Analyze the current portfolio performance and provide insights."""
+    return types.GetPromptResult(
+        description="Analyze the current portfolio performance and provide insights",
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(
+                    type="text",
+                    text="""Please analyze my current portfolio using the portfolio://current resource. 
+
 Focus on:
 1. Overall portfolio performance (P&L analysis)
 2. Position sizes and risk concentration
@@ -370,21 +263,27 @@ Focus on:
 5. Recommendations for portfolio optimization
 
 Use the get_portfolio() tool to get the latest data if needed."""
-                    )
                 )
-            ]
-        )
+            )
+        ]
+    )
+
+
+@mcp.prompt("market_check")
+def market_check_prompt(symbols: str = "") -> types.GetPromptResult:
+    """Check current market prices for specified symbols.
     
-    elif name == "market_check":
-        symbols = arguments.get("symbols", "") if arguments else ""
-        return types.GetPromptResult(
-            description="Check current market prices for specified symbols",
-            messages=[
-                types.PromptMessage(
-                    role="user",
-                    content=types.TextContent(
-                        type="text",
-                        text=f"""Please check the current market prices for these symbols: {symbols}
+    Args:
+        symbols: Comma-separated list of symbols to check
+    """
+    return types.GetPromptResult(
+        description="Check current market prices for specified symbols",
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(
+                    type="text",
+                    text=f"""Please check the current market prices for these symbols: {symbols}
 
 For each symbol:
 1. Get the current price using get_stock_price()
@@ -392,54 +291,12 @@ For each symbol:
 3. Provide market insights or notable price movements
 
 Use the portfolio://current resource to see if I have positions in these symbols."""
-                    )
                 )
-            ]
-        )
-    
-    else:
-        raise ValueError(f"Unknown prompt: {name}")
-
-
-@server.list_prompts()
-async def handle_list_prompts() -> list[types.Prompt]:
-    """List available prompts."""
-    return [
-        types.Prompt(
-            name="analyze_portfolio",
-            description="Analyze the current portfolio performance and provide insights",
-            arguments=[]
-        ),
-        types.Prompt(
-            name="market_check",
-            description="Check current market prices for specified symbols",
-            arguments=[
-                types.PromptArgument(
-                    name="symbols",
-                    description="Comma-separated list of symbols to check",
-                    required=True
-                )
-            ]
-        )
-    ]
-
-
-async def run():
-    """Run the MCP server using stdio transport."""
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="IBKR-MCP-Server",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
-        )
+            )
+        ]
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(run()) 
+    # FastMCP handles the server setup automatically
+    mcp.run() 

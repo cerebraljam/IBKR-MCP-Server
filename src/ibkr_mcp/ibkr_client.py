@@ -82,8 +82,14 @@ class IBKRClient:
             # Get portfolio items
             portfolio_items = self.ib.portfolio(self.account)
             
-            # Get account values
-            account_values = {item.tag: float(item.value) for item in self.ib.accountValues(self.account)}
+            # Get account values (filter out non-numeric values)
+            account_values = {}
+            for item in self.ib.accountValues(self.account):
+                try:
+                    account_values[item.tag] = float(item.value)
+                except (ValueError, TypeError):
+                    # Skip non-numeric values (like account IDs, currency codes, etc.)
+                    continue
             
             # Convert portfolio items to our Position model
             positions = []
@@ -159,8 +165,14 @@ class IBKRClient:
         self._ensure_connected()
         
         try:
-            # Get account values
-            account_values = {item.tag: float(item.value) for item in self.ib.accountValues(self.account)}
+            # Get account values (filter out non-numeric values)
+            account_values = {}
+            for item in self.ib.accountValues(self.account):
+                try:
+                    account_values[item.tag] = float(item.value)
+                except (ValueError, TypeError):
+                    # Skip non-numeric values (like account IDs, currency codes, etc.)
+                    continue
             
             summary = AccountSummary(
                 account=self.account,
