@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ibkr-mcp"
+version = "0.1.0"
+description = "Interactive Brokers MCP Server for TWS API"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "IBKR MCP Server"},
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.9.0",
+    "ib_async>=0.9.86",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/xiao81/IBKR-MCP-Server"
+Repository = "https://github.com/xiao81/IBKR-MCP-Server"
+
+[project.scripts]
+ibkr-mcp-server = "ibkr_mcp.server:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ibkr_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/LICENSE",
+]
+
+# UV-specific configuration
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+
+[tool.uv.sources] 
