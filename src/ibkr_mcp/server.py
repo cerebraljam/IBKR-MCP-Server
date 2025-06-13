@@ -14,8 +14,13 @@ from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 
+import nest_asyncio
 import mcp.types as types
 from mcp.server.fastmcp import FastMCP
+
+# Apply nest_asyncio to allow nested event loops
+# This fixes "This event loop is already running" errors in MCP context
+nest_asyncio.apply()
 
 from ibkr_mcp.config import get_default_config, IBKRConfig
 from ibkr_mcp.ibkr_client import IBKRClient

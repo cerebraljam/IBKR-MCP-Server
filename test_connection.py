@@ -148,18 +148,19 @@ async def main():
     # Check prerequisites
     if not check_prerequisites():
         print("❌ Prerequisites check failed. Please install missing packages.")
-        sys.exit(1)
+        return 1
     
     # Test IBKR connection
     success = await test_ibkr_connection()
     
     if success:
         print("\n🎉 Setup validation completed successfully!")
-        sys.exit(0)
+        return 0
     else:
         print("\n❌ Setup validation failed. Please check the troubleshooting steps.")
-        sys.exit(1)
+        return 1
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code) 
