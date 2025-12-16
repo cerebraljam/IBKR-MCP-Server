@@ -441,6 +441,7 @@ async def main(test_type: str = "all"):
         print("   3. Verify port settings (7497 for paper, 7496 for live)")
         print("   4. Check firewall settings")
         print("   5. Ensure you're logged into your account")
+<<<<<<< HEAD
         return 1
 
     # Print summary
@@ -494,3 +495,61 @@ if __name__ == "__main__":
 
     exit_code = asyncio.run(main(test_type))
     sys.exit(exit_code) 
+=======
+        return False
+
+
+def check_prerequisites():
+    """Check if prerequisites are installed."""
+    print("🔍 Checking prerequisites...")
+    
+    try:
+        import ib_async
+        print(f"✅ ib_async version: {ib_async.__version__}")
+    except ImportError:
+        print("❌ ib_async not found. Run: pip install ib_async")
+        return False
+        
+    try:
+        import mcp
+        print(f"✅ mcp package found")
+    except ImportError:
+        print("❌ mcp not found. Run: pip install mcp[cli]")
+        return False
+        
+    try:
+        import pydantic
+        print(f"✅ pydantic version: {pydantic.__version__}")
+    except ImportError:
+        print("❌ pydantic not found. Run: pip install pydantic")
+        return False
+        
+    print()
+    return True
+
+
+async def main():
+    """Main test function."""
+    print("IBKR MCP Server - Connection Test")
+    print("=" * 40)
+    print()
+    
+    # Check prerequisites
+    if not check_prerequisites():
+        print("❌ Prerequisites check failed. Please install missing packages.")
+        sys.exit(1)
+    
+    # Test IBKR connection
+    success = await test_ibkr_connection()
+    
+    if success:
+        print("\n🎉 Setup validation completed successfully!")
+        sys.exit(0)
+    else:
+        print("\n❌ Setup validation failed. Please check the troubleshooting steps.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main()) 
+>>>>>>> parent of 8c60732 (fixed get stock price)

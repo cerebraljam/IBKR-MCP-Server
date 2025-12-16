@@ -129,42 +129,6 @@ class IBKRClient:
         logger.error("Failed to reconnect after maximum attempts")
         return False
     
-    async def _request_market_data(self, contract) -> object:
-        """Request market data for a contract and wait for response."""
-        # Qualify the contract first
-        self.ib.qualifyContracts(contract)
-        
-        # For MCP context, try getting existing ticker data first
-        existing_tickers = [t for t in self.ib.tickers() if t.contract.symbol == contract.symbol]
-        if existing_tickers:
-            ticker = existing_tickers[0]
-            # Check if the existing ticker has valid data
-            if ticker.marketPrice() or ticker.last or ticker.close:
-                return ticker
-        
-        # If no existing data, request market data snapshot
-        ticker = self.ib.reqMktData(contract, '', True, False)  # snapshot=True
-        
-        # Wait for data to populate with proper checking
-        import time
-        max_wait = 5  # Maximum 5 seconds
-        wait_interval = 0.2  # Check every 200ms
-        elapsed = 0
-        
-        while elapsed < max_wait:
-            time.sleep(wait_interval)
-            elapsed += wait_interval
-            
-            # Check if we have valid price data
-            price = ticker.marketPrice() or ticker.last or ticker.close
-            if price and price > 0:
-                break
-        
-        # Cancel market data subscription
-        self.ib.cancelMktData(contract)
-        
-        return ticker
-    
     async def get_portfolio(self) -> Portfolio:
         """Get current portfolio."""
         self._ensure_connected()
@@ -295,17 +259,25 @@ class IBKRClient:
         self._ensure_connected()
         
         try:
-            # Create stock contract with currency specified
-            contract = Stock(symbol, exchange, currency='USD')
+            # Create stock contract
+            contract = Stock(symbol, exchange)
             
-            # Request market data using shared method
-            ticker = await self._request_market_data(contract)
+            # Request market data
+            self.ib.reqMktData(contract, '', False, False)
             
-            # Extract price data from ticker
-            price = ticker.marketPrice() or ticker.close or ticker.last or 0.0
-            bid = ticker.bid if ticker.bid and ticker.bid > 0 else None
-            ask = ticker.ask if ticker.ask and ticker.ask > 0 else None
-            volume = ticker.volume if ticker.volume and ticker.volume > 0 else None
+            # Wait for ticker data
+            await asyncio.sleep(2)  # Give time for data to arrive
+            
+            ticker = self.ib.reqTicker(contract)
+            
+            # Cancel market data subscription
+            self.ib.cancelMktData(contract)
+            
+            # Extract price data
+            price = ticker.marketPrice() or ticker.close or 0.0
+            bid = ticker.bid if ticker.bid > 0 else None
+            ask = ticker.ask if ticker.ask > 0 else None
+            volume = ticker.volume if ticker.volume > 0 else None
             
             market_data = MarketData(
                 symbol=symbol,
@@ -327,77 +299,31 @@ class IBKRClient:
         self._ensure_connected()
         
         try:
-            # Create option contract with proper format
-            contract = Option(symbol, expiry, float(strike), right.upper(), exchange, currency='USD')
+            # Create option contract
+            contract = Option(symbol, expiry, strike, right, exchange)
             
-            # Log the contract details for debugging
-            logger.info(f"Created option contract: {contract}")
+            # Request market data
+            self.ib.reqMktData(contract, '', False, False)
             
-            # Qualify the contract to ensure it's valid (with timeout)
-            qualified_contracts = self.ib.qualifyContracts(contract)
-            if not qualified_contracts:
-                # Try alternative approach: use reqContractDetails
-                logger.warning(f"Direct qualification failed, trying contract details lookup")
-                contract_details = self.ib.reqContractDetails(contract)
-                if not contract_details:
-                    raise Exception(f"Option contract not found: {symbol} {expiry} {strike} {right}. Contract may not exist or be tradeable.")
-                qualified_contract = contract_details[0].contract
-            else:
-                qualified_contract = qualified_contracts[0]
+            # Wait for ticker data
+            await asyncio.sleep(2)
             
-            logger.info(f"Using contract: {qualified_contract}")
-            
-            # Request market data for the qualified contract with shorter timeout
-            ticker = self.ib.reqMktData(qualified_contract, '', True, False)  # snapshot=True
-            
-            # Reduced wait time to avoid MCP timeout
-            import time
-            max_wait = 5  # Reduced from 10 seconds
-            wait_interval = 0.5  # Check every 500ms
-            elapsed = 0
-            
-            while elapsed < max_wait:
-                time.sleep(wait_interval)
-                elapsed += wait_interval
-                
-                # Check if we have valid option price data
-                price = ticker.marketPrice() or ticker.last or ticker.close
-                if price and price > 0:
-                    logger.info(f"Option data received: price={price}, bid={ticker.bid}, ask={ticker.ask}")
-                    break
-                    
-                # Also check if bid/ask are available (sometimes more reliable for options)
-                if ticker.bid and ticker.ask and ticker.bid > 0:
-                    logger.info(f"Option bid/ask received: bid={ticker.bid}, ask={ticker.ask}")
-                    break
-                    
-                # Check every 2 seconds if we should give up early
-                if elapsed >= 2 and not (ticker.bid or ticker.ask or ticker.last):
-                    logger.warning(f"No option data after {elapsed}s, option may not be actively traded")
+            ticker = self.ib.reqTicker(contract)
             
             # Cancel market data subscription
-            self.ib.cancelMktData(qualified_contract)
+            self.ib.cancelMktData(contract)
             
-            # Extract price data from ticker
-            price = ticker.marketPrice() or ticker.last or ticker.close
+            # Extract price data
+            price = ticker.marketPrice() or ticker.close or 0.0
+            bid = ticker.bid if ticker.bid > 0 else None
+            ask = ticker.ask if ticker.ask > 0 else None
+            volume = ticker.volume if ticker.volume > 0 else None
             
-            # For options, if no market price, use mid-point of bid/ask
-            if not price or price == 0:
-                if ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0:
-                    price = (ticker.bid + ticker.ask) / 2
-                    logger.info(f"Using bid/ask midpoint: {price}")
-                else:
-                    logger.warning(f"No price data available for option {symbol} {expiry} {strike} {right}")
-            
-            bid = ticker.bid if ticker.bid and ticker.bid > 0 else None
-            ask = ticker.ask if ticker.ask and ticker.ask > 0 else None
-            volume = ticker.volume if ticker.volume and ticker.volume > 0 else None
-            
-            option_symbol = f"{symbol}_{expiry}_{strike}_{right.upper()}"
+            option_symbol = f"{symbol}_{expiry}_{strike}_{right}"
             
             market_data = MarketData(
                 symbol=option_symbol,
-                price=float(price) if price else 0.0,
+                price=float(price),
                 bid=float(bid) if bid else None,
                 ask=float(ask) if ask else None,
                 volume=int(volume) if volume else None,
