@@ -95,6 +95,27 @@ uv run python src/ibkr_mcp/server.py
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
+**Option A: Using Python Virtual Environment (Recommended)**
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "command": "/path/to/IBKR-MCP-Server/venv/bin/python",
+      "args": [
+        "/path/to/IBKR-MCP-Server/src/ibkr_mcp/server.py"
+      ],
+      "env": {
+        "IBKR_HOST": "127.0.0.1",
+        "IBKR_PORT": "7497",
+        "IBKR_CLIENT_ID": "1",
+        "IBKR_IS_PAPER": "true"
+      }
+    }
+  }
+}
+```
+
+**Option B: Using UV**
 ```json
 {
   "mcpServers": {
@@ -103,13 +124,37 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "args": ["run", "python", "src/ibkr_mcp/server.py"],
       "cwd": "/path/to/IBKR-MCP-Server",
       "env": {
+        "IBKR_HOST": "127.0.0.1",
         "IBKR_PORT": "7497",
+        "IBKR_CLIENT_ID": "1",
         "IBKR_IS_PAPER": "true"
       }
     }
   }
 }
 ```
+
+**Windows Users**: Use Windows-style paths:
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "command": "C:\\path\\to\\IBKR-MCP-Server\\venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\path\\to\\IBKR-MCP-Server\\src\\ibkr_mcp\\server.py"
+      ],
+      "env": {
+        "IBKR_HOST": "127.0.0.1",
+        "IBKR_PORT": "7497",
+        "IBKR_CLIENT_ID": "1",
+        "IBKR_IS_PAPER": "true"
+      }
+    }
+  }
+}
+```
+
+> **Note**: After updating the config, restart Claude Desktop for changes to take effect.
 
 ## Usage Examples
 
